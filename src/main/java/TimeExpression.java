@@ -4,110 +4,87 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.MonthDay;
 import java.time.YearMonth;
+import java.util.function.Function;
 
-abstract class TimeExpression {
-    public LocalDate initialDate;
+class TimeExpression {
+    public Function<LocalDate, Boolean> isRecurring;
 
-    public TimeExpression(LocalDate initialDate) {
-        this.initialDate = initialDate;
+    public TimeExpression(Function<LocalDate, Boolean> predicate) {
+        this.isRecurring = predicate;
     }
 
-    public abstract boolean isRecurringOn (LocalDate theDate);
-
-    public static TimeExpression on(LocalDate aDate) {
-        return new NoRecurringTimeExpression(aDate);
+    public boolean isRecurringOn(LocalDate aDate) {
+        return isRecurring.apply(aDate);
     }
 
-    public static TimeExpression dailyEveryFromOnwards(TimeInterval anAmountOfDays, LocalDate aDate) {
-        return new RecurringTimeExpression(aDate, anAmountOfDays);
+    public static TimeExpression on(LocalDate initialDate) {
+        return new TimeExpression(NoRecurringTimeExpressions.isRecurringOn(initialDate));
+    }
+
+    public static TimeExpression dailyEveryFromOnwards(TimeInterval anAmountOfDays, LocalDate initialDate) {
+        return new TimeExpression(RecurringTimeExpression.isRecurringOn(initialDate, anAmountOfDays));
     }
 
     public static TimeExpression monthlyEveryOnFromOnwards(TimeInterval anAmountOfMonths, int aDayInMonth, YearMonth anYear) {
-        LocalDate aDate = anYear.atDay(aDayInMonth);
-        return new RecurringTimeExpression(aDate, anAmountOfMonths);
+        LocalDate initialDate = anYear.atDay(aDayInMonth);
+        return new TimeExpression(RecurringTimeExpression.isRecurringOn(initialDate, anAmountOfMonths));
     }
 
     public static TimeExpression monthlyEveryOnOfFromOnwards(TimeInterval anAmountOfMonths, DayOfWeek aDayOfWeek, int aWeekInMonth, YearMonth anYear) {
-        LocalDate aDate = anYear.atDay(1).with(dayOfWeekInMonth(aWeekInMonth, aDayOfWeek));
-        return new DayInMonthTimeExpression(anAmountOfMonths, aDayOfWeek.getValue(), aWeekInMonth, aDate);
+        LocalDate initialDate = anYear.atDay(1).with(dayOfWeekInMonth(aWeekInMonth, aDayOfWeek));
+        return new TimeExpression(DayInMonthTimeExpression.isRecurringOn(aDayOfWeek.getValue(), aWeekInMonth, initialDate));
     }
 
     public static TimeExpression yearlyEveryOnFromOnwards(TimeInterval anAmountOfYears, MonthDay aMonthDay, int anYear) {
-        LocalDate aDate = aMonthDay.atYear(anYear);
-        return new RecurringTimeExpression(aDate, anAmountOfYears);
-    }
-
-    public boolean isDateEqual(LocalDate aDate) {
-        return this.initialDate.equals(aDate);
-    }
-
-    public boolean isDateAfter(LocalDate date) {
-        return date.isAfter(this.initialDate);
+        LocalDate initialDate = aMonthDay.atYear(anYear);
+        return new TimeExpression(RecurringTimeExpression.isRecurringOn(initialDate, anAmountOfYears));
     }
 }
 
-class NoRecurringTimeExpression extends TimeExpression {
-    public NoRecurringTimeExpression(LocalDate initialDate) {
-        super(initialDate);
-    }
-
-    @Override
-    public boolean isRecurringOn(LocalDate aDate) {
-        return this.isDateEqual(aDate);
+class NoRecurringTimeExpressions {
+    public static Function<LocalDate, Boolean> isRecurringOn(LocalDate initialDate) {
+        return (LocalDate date) -> date.equals(initialDate);
     }
 }
 
-class RecurringTimeExpression extends TimeExpression {
-    public TimeInterval timeInterval;
-
-    public RecurringTimeExpression(LocalDate initialDate, TimeInterval timeInterval) {
-        super(initialDate);
-        this.timeInterval = timeInterval;
+class RecurringTimeExpression {
+    private static boolean matchesInterval(LocalDate initialDate, LocalDate date, TimeInterval timeInterval) {
+        long diff = timeInterval.getTimeUnit().between(initialDate, date);
+        return diff != 0 && (diff % timeInterval.getAmount() == 0);
     }
 
-    @Override
-    public boolean isRecurringOn(LocalDate aDate) {
-        long diff = this.timeInterval.getTimeUnit().between(this.initialDate, aDate);
-
-        return this.isDateEqual(aDate)
-                || this.isDateAfter(aDate) && diff != 0 && (diff % this.timeInterval.getAmount() == 0);
+    public static Function<LocalDate, Boolean> isRecurringOn(LocalDate initialDate, TimeInterval timeInterval) {
+        return (LocalDate date) -> date.equals(initialDate)
+                    || date.isAfter(initialDate) && matchesInterval(initialDate, date, timeInterval);
     }
 }
 
-class DayInMonthTimeExpression extends RecurringTimeExpression {
-    private int weekNumber;
-    private int dayIndex;
-
-    public DayInMonthTimeExpression(TimeInterval anAmountOfMonths, int dayIndex, int weekNumber, LocalDate initialDate) {
-        super(initialDate, anAmountOfMonths);
-        this.dayIndex = dayIndex;
-        this.weekNumber = weekNumber;
-    };
-
-    @Override
-    public boolean isRecurringOn (LocalDate aDate) {
-        return this.isDateEqual(aDate) || this.isDateAfter(aDate) && dayMatches(aDate) && weekMatches(aDate);
-    }
-    private boolean dayMatches (LocalDate aDate) {
+class DayInMonthTimeExpression {
+    private static boolean dayMatches(LocalDate aDate, int dayIndex) {
         return aDate.getDayOfWeek().getValue() == dayIndex;
     }
-    private boolean weekMatches (LocalDate aDate) {
+    private static boolean weekMatches(LocalDate aDate, int weekNumber) {
         if (weekNumber > 0)
-            return weekFromStartMatches(aDate);
+            return weekFromStartMatches(aDate, weekNumber);
         else
-            return weekFromEndMatches(aDate);
+            return weekFromEndMatches(aDate, weekNumber);
     }
-    private boolean weekFromStartMatches (LocalDate aDate) {
-        return this.weekInMonth(aDate.getDayOfMonth()) == weekNumber;
+    private static boolean weekFromStartMatches (LocalDate aDate, int weekNumber) {
+        return weekInMonth(aDate.getDayOfMonth()) == weekNumber;
     }
-    private boolean weekFromEndMatches (LocalDate aDate) {
+    private static boolean weekFromEndMatches (LocalDate aDate, int weekNumber) {
         int daysFromMonthEnd = daysLeftInMonth(aDate) + 1;
         return weekInMonth(daysFromMonthEnd) == Math.abs(weekNumber);
     }
-    private int weekInMonth (int dayNumber) {
+    private static int weekInMonth (int dayNumber) {
         return (dayNumber / 7) + 1;
     }
-    private int daysLeftInMonth (LocalDate aDate) {
+    private static int daysLeftInMonth (LocalDate aDate) {
         return YearMonth.of(aDate.getYear(), aDate.getMonth()).lengthOfMonth() - aDate.getDayOfMonth();
+    }
+
+    public static Function<LocalDate, Boolean> isRecurringOn(int dayIndex, int weekNumber, LocalDate initialDate) {
+        return (LocalDate date) -> date.equals(initialDate)
+                    || date.isAfter(initialDate) && dayMatches(date, dayIndex) && weekMatches(date, weekNumber);
     }
 }
